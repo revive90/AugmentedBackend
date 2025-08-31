@@ -3,7 +3,7 @@ from datetime import datetime
 import numpy as np
 import psutil
 
-# ---- FAISS import (robust) ----
+# ---- FAISS import is like this because I kept getting an error even though module is installed ----
 try:
     import faiss
 except ImportError:
@@ -13,10 +13,10 @@ except ImportError:
         import faiss_gpu as faiss
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-#///
+#
 # -------------------- Defaults --------------------
-#ROOT_DATASET_DIR = os.path.abspath("../../data/organised_data/Dataset_B/Training")
-#AUGMENTED_OUTPUT_DIR = os.path.abspath("../../data/augmented_data/Dino/Dataset_B/Training")
+#  ROOT_DATASET_DIR = os.path.abspath("../../data/organised_data/Dataset_B/Training")
+#  AUGMENTED_OUTPUT_DIR = os.path.abspath("../../data/augmented_data/Dino/Dataset_B/Training")
 INDEX_OUTPUT_DIR = os.path.abspath("Faiss_Indexes")
 RESULTS_OUTPUT_DIR = os.path.abspath("augmentation_results")
 
@@ -24,6 +24,7 @@ AUGMENTATION_TARGET_PERCENTAGE = 600
 UPPER_THRESHOLD = 0.99
 MINIMUM_QUALITY_THRESHOLD = 0.80
 
+# I used these limits to ensure fair comparisons with the original ocmris number of generated images
 CLASS_TARGETS = {
     "glioma_tumor": 20441, "glioma": 20441,
     "meningioma_tumor": 11814, "meningioma": 11814,
@@ -121,6 +122,22 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, UPPER_THRESHOLD, MINIMUM_QUALIT
         emit_event(type="done", elapsed_seconds=0, peak_mb=mem.get_peak())
         return
 
+    # ---------------- timings & stats containers ----------------
+    stage1_start = time.time()
+    per_class_stats = []  # list of dicts
+    config_snapshot = {
+        "dataset_dir": os.path.abspath(ROOT_DATASET_DIR),
+        "augmented_output_dir": os.path.abspath(AUGMENTED_OUTPUT_DIR),
+        "index_output_dir": os.path.abspath(INDEX_OUTPUT_DIR),
+        "results_output_dir": os.path.abspath(RESULTS_OUTPUT_DIR),
+        "upper_threshold": UPPER_THRESHOLD,
+        "minimum_quality_threshold": MINIMUM_QUALITY_THRESHOLD,
+        "augmentation_target_percentage": AUGMENTATION_TARGET_PERCENTAGE,
+        "class_targets_overrides": {k: v for k, v in CLASS_TARGETS.items()},
+        "classes_found": classes,
+        "start_time_iso": datetime.now().isoformat(timespec="seconds")
+    }
+
     try:
         if os.path.exists(INDEX_OUTPUT_DIR) and os.access(INDEX_OUTPUT_DIR, os.W_OK):
             shutil.rmtree(INDEX_OUTPUT_DIR)
@@ -170,44 +187,103 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, UPPER_THRESHOLD, MINIMUM_QUALIT
 
         emit_event(type="overall_progress", percent=(idx + 1) / len(class_dirs) * 40.0, phase="index", cls=class_name)
 
+    stage1_end = time.time()
+    stage1_duration = stage1_end - stage1_start
+
     print("\n--- STAGE 2: Starting Online Augmentation ---")
     os.makedirs(AUGMENTED_OUTPUT_DIR, exist_ok=True)
 
     total_generated = 0
     slice_per_class = 60.0 / float(len(class_dirs))
+    stage2_start = time.time()
 
     for idx, class_dir in enumerate(class_dirs):
         class_name = os.path.basename(class_dir)
+        class_stats = {
+            "class": class_name,
+            "images_in_class": 0,
+            "index_size": 0,
+            "target_count": 0,
+            "planned_pairs": 0,
+            "lower_threshold": None,
+            "upper_threshold": UPPER_THRESHOLD,
+            "available_pairs_at_chosen_band": 0,
+            "available_pairs_at_min_band": 0,
+            "shortfall": 0,
+            "sim_selected_min": None,
+            "sim_selected_max": None,
+            "sim_selected_avg": None,
+            "generation_time_seconds": 0.0,
+            "output_dir": None
+        }
+
         print(f"\nAugmenting class: {class_name}")
+        class_start = time.time()
 
         index_file = os.path.join(INDEX_OUTPUT_DIR, class_name, "class.index")
         map_file = os.path.join(INDEX_OUTPUT_DIR, class_name, "index_to_path.pkl")
         if not (os.path.exists(index_file) and os.path.exists(map_file)):
             emit_event(type="overall_progress", percent=40.0 + (idx + 1) * slice_per_class, phase="augment", cls=class_name)
+            per_class_stats.append(class_stats)
             continue
 
         index = faiss.read_index(index_file)
         with open(map_file, "rb") as f:
             image_paths = pickle.load(f)
 
+        class_stats["images_in_class"] = len(image_paths)
+        class_stats["index_size"] = int(index.ntotal)
+
         target_count = CLASS_TARGETS.get(class_name, int(len(image_paths) * (AUGMENTATION_TARGET_PERCENTAGE / 100.0)))
+        class_stats["target_count"] = int(target_count)
 
         if index.ntotal == 0 or target_count <= 0:
             emit_event(type="overall_progress", percent=40.0 + (idx + 1) * slice_per_class, phase="augment", cls=class_name)
+            per_class_stats.append(class_stats)
             continue
 
         embeds = index.reconstruct_n(0, index.ntotal)
         mem.track()
 
         lower_th, pairs = plan_pairs(embeddings=embeds, upper=UPPER_THRESHOLD, lower_min=MINIMUM_QUALITY_THRESHOLD, target_count=target_count)
+        class_stats["lower_threshold"] = float(lower_th)
+        class_stats["planned_pairs"] = int(len(pairs))
+
         print(f"  Planned {len(pairs)} pairs with lower={lower_th:.2f}, upper={UPPER_THRESHOLD:.2f}")
+
+        # Compute similarity stats for reporting (recompute norm & sim here)
+        try:
+            norm = embeds / np.linalg.norm(embeds, axis=1, keepdims=True)
+            sim_mat = norm @ norm.T
+            # counts available in chosen band and at min band
+            n = norm.shape[0]
+            iu = np.triu_indices(n, k=1)
+            sims_all = sim_mat[iu]
+            # chosen band
+            mask_chosen = (sims_all >= lower_th) & (sims_all < UPPER_THRESHOLD)
+            class_stats["available_pairs_at_chosen_band"] = int(np.count_nonzero(mask_chosen))
+            # min band (lower_min..upper)
+            mask_min = (sims_all >= MINIMUM_QUALITY_THRESHOLD) & (sims_all < UPPER_THRESHOLD)
+            class_stats["available_pairs_at_min_band"] = int(np.count_nonzero(mask_min))
+            # selected sims
+            if pairs:
+                sel_sims = np.array([sim_mat[a, b] for (a, b) in pairs], dtype=np.float32)
+                class_stats["sim_selected_min"] = float(np.min(sel_sims))
+                class_stats["sim_selected_max"] = float(np.max(sel_sims))
+                class_stats["sim_selected_avg"] = float(np.mean(sel_sims))
+        except Exception as _e:
+            # Leave stats as None if something goes wrong; we don't break the pipeline
+            pass
 
         if not pairs:
             emit_event(type="overall_progress", percent=40.0 + (idx + 1) * slice_per_class, phase="augment", cls=class_name)
+            class_stats["shortfall"] = int(max(0, target_count))
+            per_class_stats.append(class_stats)
             continue
 
         class_out = os.path.join(AUGMENTED_OUTPUT_DIR, class_name)
         os.makedirs(class_out, exist_ok=True)
+        class_stats["output_dir"] = os.path.abspath(class_out)
 
         for j, (a, b) in enumerate(pairs):
             p1, p2 = image_paths[a], image_paths[b]
@@ -223,24 +299,98 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, UPPER_THRESHOLD, MINIMUM_QUALIT
                 overall_now = 40.0 + (idx * slice_per_class) + (class_progress * slice_per_class)
                 emit_event(type="overall_progress", percent=overall_now, phase="augment", cls=class_name)
 
+        # finish per-class stats
+        class_end = time.time()
+        class_stats["generation_time_seconds"] = float(class_end - class_start)
+        class_stats["shortfall"] = int(max(0, target_count - len(pairs)))
+        per_class_stats.append(class_stats)
+
+    stage2_end = time.time()
+    stage2_duration = stage2_end - stage2_start
+
     overall_end = time.time()
     duration = overall_end - overall_start
 
+    # ---------------- write detailed summaries ----------------
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_filename = f"augmentation_newPipeline_results_{ts}.txt"
+    json_filename = f"augmentation_newPipeline_results_{ts}.json"
     os.makedirs(RESULTS_OUTPUT_DIR, exist_ok=True)
     log_path = os.path.join(RESULTS_OUTPUT_DIR, log_filename)
+    json_path = os.path.join(RESULTS_OUTPUT_DIR, json_filename)
+
+    # text report
     with open(log_path, "w") as f:
+        f.write("=== Enhanced OCMRI Augmentation Summary ===\n")
+        f.write(f"Run Timestamp: {ts}\n")
+        f.write(f"Dataset Dir: {config_snapshot['dataset_dir']}\n")
+        f.write(f"Augmented Output Dir: {config_snapshot['augmented_output_dir']}\n")
+        f.write(f"Index Output Dir: {config_snapshot['index_output_dir']}\n")
+        f.write(f"Results Output Dir: {config_snapshot['results_output_dir']}\n\n")
+
+        f.write("--- Configuration ---\n")
+        f.write(f"Upper Threshold (U): {UPPER_THRESHOLD}\n")
+        f.write(f"Minimum Quality Threshold (L_min): {MINIMUM_QUALITY_THRESHOLD}\n")
+        f.write(f"Augmentation Target (% of class): {AUGMENTATION_TARGET_PERCENTAGE}\n")
+        f.write(f"Class Target Overrides: {json.dumps(config_snapshot['class_targets_overrides'])}\n\n")
+
+        f.write("--- Timings ---\n")
+        f.write(f"Stage 1 (Indexing) Time: {stage1_duration:.2f} seconds\n")
+        f.write(f"Stage 2 (Augmentation) Time: {stage2_duration:.2f} seconds\n")
+        f.write(f"Total Execution Time: {duration:.2f} seconds\n\n")
+
+        f.write("--- Resources ---\n")
+        f.write(f"Peak Memory Usage: {mem.get_peak():.2f} MB\n\n")
+
+        f.write("--- Overall Output ---\n")
         f.write(f"Total New Images Generated: {total_generated}\n")
-        f.write(f"Peak Memory Usage: {mem.get_peak():.2f} MB\n")
-        f.write(f"Total Execution Time: {duration:.2f} seconds\n")
+        f.write(f"Total Classes Processed: {len(classes)}\n\n")
+
+        f.write("--- Per-Class Details ---\n")
+        for cs in per_class_stats:
+            f.write(f"\nClass: {cs['class']}\n")
+            f.write(f"  Images in Class: {cs['images_in_class']}\n")
+            f.write(f"  Index Size: {cs['index_size']}\n")
+            f.write(f"  Target Augmentations: {cs['target_count']}\n")
+            f.write(f"  Planned Pairs: {cs['planned_pairs']}\n")
+            f.write(f"  Thresholds Used: lower={cs['lower_threshold']}, upper={cs['upper_threshold']}\n")
+            f.write(f"  Available Pairs at Chosen Band [lower, upper): {cs['available_pairs_at_chosen_band']}\n")
+            f.write(f"  Available Pairs at Min Band   [L_min, upper): {cs['available_pairs_at_min_band']}\n")
+            f.write(f"  Shortfall vs Target: {cs['shortfall']}\n")
+            f.write(f"  Selected Similarity (min/avg/max): {cs['sim_selected_min']}/{cs['sim_selected_avg']}/{cs['sim_selected_max']}\n")
+            f.write(f"  Generation Time (s): {cs['generation_time_seconds']:.2f}\n")
+            f.write(f"  Output Directory: {cs['output_dir']}\n")
+
+    # json report (machine-readable)
+    summary_json = {
+        "run": config_snapshot,
+        "timings": {
+            "stage1_indexing_seconds": stage1_duration,
+            "stage2_augmentation_seconds": stage2_duration,
+            "total_seconds": duration
+        },
+        "resources": {
+            "peak_memory_mb": mem.get_peak()
+        },
+        "overall": {
+            "total_generated": total_generated,
+            "total_classes": len(classes)
+        },
+        "per_class": per_class_stats
+    }
+    try:
+        with open(json_path, "w") as jf:
+            json.dump(summary_json, jf, indent=2)
+    except Exception:
+        pass
 
     print("\n\n--- Full Pipeline Complete ---")
     print(f"--- Results saved to: '{log_path}' ---")
+    print(f"--- JSON summary saved to: '{json_path}' ---")
     print(f"--- Total execution time: {duration:.2f} seconds. ---")
 
     emit_event(type="overall_progress", percent=100.0)
-    emit_event(type="done", elapsed_seconds=duration, peak_mb=mem.get_peak(), summary_path=log_path)
+    emit_event(type="done", elapsed_seconds=duration, peak_mb=mem.get_peak(), summary_path=log_path, summary_json=json_path)
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()

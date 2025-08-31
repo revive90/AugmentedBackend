@@ -1,4 +1,3 @@
-# feature_extractor.py
 import torch
 from transformers import AutoImageProcessor, AutoModel
 from PIL import Image
