@@ -16,7 +16,6 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 INDEX_OUTPUT_DIR = os.path.abspath("Faiss_Indexes")
 RESULTS_OUTPUT_DIR = os.path.abspath("augmentation_results")
 
-# ---- optional deps used by your project ----
 try:
     from feature_extractor import FeatureExtractor
 except Exception:
@@ -25,7 +24,7 @@ except Exception:
 try:
     from utils import fuse_images
 except Exception:
-    # Tiny fallback fuse implementation (stripes) so the script still runs.
+
     import cv2, numpy as np
     def fuse_images(p1, p2, outp):
         i1, i2 = cv2.imread(p1), cv2.imread(p2)
@@ -77,7 +76,7 @@ def top_pairs_by_similarity(embeddings, top_k):
     sims = norm @ norm.T
     iu = np.triu_indices(n, k=1)
     vals = sims[iu]
-    order = np.argsort(vals)[::-1]  # high -> low
+    order = np.argsort(vals)[::-1]
     a = iu[0][order]
     b = iu[1][order]
     # clip to top_k
@@ -255,7 +254,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, AUGMENTATION_TARGET_PERCENTAGE)
     stage2_dur = time.time() - stage2_start
     duration = time.time() - overall_start
 
-    # ---- Reporting ----
+    # textfile report
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     os.makedirs(RESULTS_OUTPUT_DIR, exist_ok=True)
     txt = os.path.join(RESULTS_OUTPUT_DIR, f"augmentation_percentage_mode_{ts}.txt")

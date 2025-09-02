@@ -51,7 +51,6 @@ class EnhancedClassSpecificRequest(BaseModel):
     AUGMENTED_OUTPUT_DIR: str
     CLASS_TARGETS_JSON: str  # JSON string e.g. {"glioma":2000,...}
 
-# ----------------- Helpers -----------------
 def to_static_url(p: Path) -> Optional[str]:
     try:
         rel = p.resolve().relative_to(SERVE_ROOT)
@@ -208,7 +207,6 @@ def _stream_proc(cmd: List[str], cwd: Path, out_dir: Path, script_dir: Path) -> 
         if p.exists():
             summary_url = _path_to_static_url(p)
 
-    # Fallback: latest summary in folder
     if not summary_url:
         summary_url = _latest_summary_url(script_dir)
 
@@ -218,7 +216,7 @@ def _stream_proc(cmd: List[str], cwd: Path, out_dir: Path, script_dir: Path) -> 
 
     yield f"\n{SENTINEL} " + json.dumps(payload) + "\n"
 
-# ----------------- Utility endpoints -----------------
+# -----------------  endpoints -----------------
 @app.get("/datasets/scan-classes")
 def scan_classes(root: str = Query(..., description="Path to dataset root")):
     root_dir = _validate_path(root, "ROOT_DATASET_DIR")

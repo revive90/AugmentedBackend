@@ -18,20 +18,18 @@ except ImportError:
     except ImportError:
         import faiss_gpu as faiss
 
-# Avoid OpenMP duplicate warning crashes in some environments
+#  OpenMP duplicate warning crashes in some environments
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # Default folders (written relative to where the script runs)
 INDEX_OUTPUT_DIR = os.path.abspath("Faiss_Indexes")
 RESULTS_OUTPUT_DIR = os.path.abspath("augmentation_results")
 
-# --- feature extractor (must exist in your project) ---
 try:
     from feature_extractor import FeatureExtractor  # must expose .extract(img_path)->np.ndarray
 except Exception:
     FeatureExtractor = None
 
-# --- fuse function (fallback if utils not present) ---
 try:
     from utils import fuse_images
 except Exception:
@@ -103,7 +101,7 @@ def _extract_class_images(root_dir):
 
 def _top_pairs_by_similarity(embeddings, target_count):
     """
-    Deterministically choose up to 'target_count' highest-similarity DISTINCT pairs.
+    Deterministically choose up to 'target_count' highest-similaity DISTINCT pairs.
     Uses cosine similarity on L2-normalized embeddings; returns list of (i, j).
     """
     n = embeddings.shape[0]
@@ -161,7 +159,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
         )
         return
 
-    # Fresh outputs (indexes + augmented)
+    # Fresh outputs (indexes and augmented)
     for path in (INDEX_OUTPUT_DIR, AUGMENTED_OUTPUT_DIR):
         try:
             if os.path.exists(path) and os.access(path, os.W_OK):
@@ -170,10 +168,10 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
             print(f"[Warning] Could not delete {path}: {e}")
     os.makedirs(AUGMENTED_OUTPUT_DIR, exist_ok=True)
 
-    # -------- Stage 1: Indexing (0% -> 40%) --------
+    # -------- Stage 1: Indexing (0% - 40%) --------
     stage1_start = time.time()
     fe = FeatureExtractor()
-    index_info = {}  # {cls: {"index_file":..., "map_file":..., "count": int}}
+    index_info = {}
 
     total_classes = len(classes)
     for idx, cls in enumerate(classes):
@@ -186,7 +184,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
                 feats.append(vec)
                 valid_paths.append(p)
 
-            # Heartbeat every 50 or at end of class
+            # heart beat every 50 or at end of class
             if (i + 1) % 50 == 0 or (i + 1) == len(image_paths):
                 mem.track()
                 emit_event(
@@ -250,7 +248,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
             "output_dir": None,
         }
 
-        # If no work to do or not enough images to form pairs
+        # If no work to do or no enough images to form pairs
         if (
             target <= 0
             or index_info[cls]["index_file"] is None
@@ -296,7 +294,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
             stats["generated"] += 1
             total_generated += 1
 
-            # Heartbeat/progress occasionally
+            # Heart beat occasionally
             if (j + 1) % 25 == 0 or (j + 1) == len(pairs):
                 mem.track()
                 emit_event(
@@ -332,7 +330,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
         RESULTS_OUTPUT_DIR, f"augmentation_class_specific_mode_{ts}.json"
     )
 
-    # Human-readable text
+    # augmentation text summary
     with open(txt, "w", encoding="utf-8") as f:
         f.write("=== Enhanced OCMRI: Class-Specific Mode Summary ===\n")
         f.write(f"Run Timestamp: {ts}\n\n")
@@ -352,7 +350,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
             f.write(f"  Generation Time (s): {cs['generation_time_seconds']:.2f}\n")
             f.write(f"  Output Directory: {cs['output_dir']}\n")
 
-    # Machine-readable JSON
+    # JSON
     try:
         with open(js, "w", encoding="utf-8") as jf:
             json.dump(
