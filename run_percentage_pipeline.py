@@ -1,8 +1,27 @@
+"""Percentage image pairing pipeline.
+
+Overview:
+- Extracts image embeddings via a pluggable FeatureExtractor.
+- Uses a similarity index (FAISS if available; otherwise a fallback) to retrieve neighbors.
+- Ranks candidate pairs by similarity and selects the top N% according to a user-defined percentage.
+- Optionally produces fused image previews and writes results under the configured output directories.
+- Includes simple memory tracking for visibility into resource usage.
+
+Key components:
+- fuse_images: Utility to create visual previews of matched pairs.
+- emit_event: Progress/status emission for logs or external consumers.
+- top_pairs_by_similarity: Core logic to select the highest-scoring fraction of pairs.
+- MemoryTracker: Tracks and exposes the peak memory used during the run.
+- main: CLI entry that ties together feature extraction, indexing, ranking, selection, and export.
+
+Intended use:
+- Run as a script to generate a fixed-percentage cut of the most similar image pairs.
+"""
 import os, shutil, pickle, time, json, argparse
 from datetime import datetime
 import numpy as np, psutil
 
-# faiss keeps throwing an error
+                               
 try:
     import faiss
 except ImportError:
@@ -37,7 +56,7 @@ except Exception:
         fused[:, 1::2] = i2[:, 1::2]
         cv2.imwrite(outp, fused)
 
-# ---- streaming helpers ----
+                             
 def emit_event(**kwargs):
     """Emit a single-line JSON event that the frontend parses."""
     try:
@@ -62,7 +81,7 @@ class MemoryTracker:
     def get_peak(self):
         return self.peak
 
-# ---- pair selection for percentage mode ----
+                                              
 def top_pairs_by_similarity(embeddings, top_k):
     """
     Return up to top_k pairs by cosine similarity (descending).
@@ -79,12 +98,12 @@ def top_pairs_by_similarity(embeddings, top_k):
     order = np.argsort(vals)[::-1]
     a = iu[0][order]
     b = iu[1][order]
-    # clip to top_k
+                   
     a = a[:top_k]
     b = b[:top_k]
     return list(zip(a, b))
 
-# ---- main ----
+                
 def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, AUGMENTATION_TARGET_PERCENTAGE):
     if FeatureExtractor is None:
         raise RuntimeError(
@@ -109,7 +128,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, AUGMENTATION_TARGET_PERCENTAGE)
         emit_event(type="done", elapsed_seconds=0, peak_mb=mem.get_peak())
         return
 
-    # fresh outputs for this mode
+                                 
     for path in (INDEX_OUTPUT_DIR, AUGMENTED_OUTPUT_DIR):
         try:
             if os.path.exists(path) and os.access(path, os.W_OK):
@@ -118,7 +137,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, AUGMENTATION_TARGET_PERCENTAGE)
             print(f"[Warning] Could not delete {path}: {e}")
     os.makedirs(AUGMENTED_OUTPUT_DIR, exist_ok=True)
 
-    # ---- Stage 1: Indexing ----
+                                 
     stage1_start = time.time()
     fe = FeatureExtractor()
     per_class_stats = []
@@ -162,7 +181,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, AUGMENTATION_TARGET_PERCENTAGE)
 
     stage1_dur = time.time() - stage1_start
 
-    # ---- Stage 2: Augmentation (percentage mode) ----
+                                                       
     total_generated = 0
     stage2_start = time.time()
     slice_per_class = 60.0 / float(len(class_dirs) or 1)
@@ -203,15 +222,15 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, AUGMENTATION_TARGET_PERCENTAGE)
             per_class_stats.append(stats)
             continue
 
-        # how many new images to generate for this class?
+                                                         
         needed = int(np.floor(n * (AUGMENTATION_TARGET_PERCENTAGE / 100.0)))
         stats["planned_new"] = needed
 
-        # reconstruct embeddings and choose top pairs
+                                                     
         embeds = index.reconstruct_n(0, index.ntotal)
         mem.track()
 
-        # Max possible unique pairs in a class
+                                              
         max_pairs = n * (n - 1) // 2
         stats["available_pairs"] = int(max_pairs)
         top_k = min(needed, max_pairs)
@@ -254,7 +273,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, AUGMENTATION_TARGET_PERCENTAGE)
     stage2_dur = time.time() - stage2_start
     duration = time.time() - overall_start
 
-    # textfile report
+                     
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     os.makedirs(RESULTS_OUTPUT_DIR, exist_ok=True)
     txt = os.path.join(RESULTS_OUTPUT_DIR, f"augmentation_percentage_mode_{ts}.txt")

@@ -1,10 +1,3 @@
-# tests.py
-# One-file test suite (pytest) for your backend
-# Run with:  pytest -q
-# Notes:
-# - Heavy model/FAISS work is stubbed so tests are fast and offline.
-# - Place this file in the SAME directory as your backend scripts.
-
 import os
 import sys
 import json
@@ -117,8 +110,8 @@ def dummy_extractor():
 # Module imports
 # -----------------
 
-# We import modules lazily *inside* tests when we need to monkeypatch first.
-# This avoids loading real DINOv2 or a real FAISS.
+# Import modules tests when theres need to monkeypatch first.
+# Avoids loading real DINOv2 or a real FAISS.
 
 # =========================================================
 # utils.fuse_images
@@ -395,6 +388,6 @@ def test_server_enhanced_stream_stubbed(monkeypatch):
 
 # What: the extractor module exists; skip heavy model loading by default.
 # Input: none (module-level presence only).
-# Expected: import succeeds; we don't instantiate the heavy class in unit tests.
+# Expected: import succeeds; not instantiating the heavy class in unit tests.
 def test_feature_extractor_module_present():
     pytest.importorskip("feature_extractor")  # :contentReference[oaicite:12]{index=12}

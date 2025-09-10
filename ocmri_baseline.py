@@ -1,3 +1,6 @@
+'''
+This is a python implementation of the baseline augmentation pipeline for the original OCMRI.
+'''
 import os
 import shutil
 import cv2
@@ -9,7 +12,7 @@ import psutil
 import json
 from datetime import datetime
 
-# -------------------- Memory tracker --------------------
+                                                          
 class MemoryTracker:
     def __init__(self):
         self.process = psutil.Process(os.getpid())
@@ -24,7 +27,7 @@ class MemoryTracker:
     def get_peak_memory(self):
         return self.peak_memory_mb
 
-# -------------------- Events and Core Functions --------------------
+                                                                     
 def emit_event(**kwargs):
     """Print a single-line JSON event for the UI; flushed immediately."""
     try:
@@ -92,7 +95,7 @@ def fuse_images(image_path1, image_path2, output_path):
             fused_image[:, i] = img2[:, i]
     cv2.imwrite(output_path, fused_image)
 
-# -------------------- Compare pass with overall % --------------------
+                                                                       
 def get_fused_pairs_for_mse(
     class_dir,
     thresholds,
@@ -116,7 +119,7 @@ def get_fused_pairs_for_mse(
         event={"type": "compare_progress", "cls": class_name, "phase": "compare",
                "class_idx": class_idx, "num_classes": num_classes}
     )
-    # initial overall with current (peak) compare progress
+                                                          
     overall = ((class_idx * 100.0) + 0.5 * compare_peak + 0.0) / float(num_classes)
     emit_event(type="overall_progress", percent=clamp(overall), cls=class_name,
                class_idx=class_idx, num_classes=num_classes)
@@ -138,7 +141,7 @@ def get_fused_pairs_for_mse(
                     rss_mb=memory_tracker.process.memory_info().rss / (1024 * 1024),
                     peak_mb=memory_tracker.get_peak_memory()
                 )
-                # update overall based on max compare so far
+                                                            
                 current_percent = 100.0 * (count / float(total_comparisons))
                 compare_peak = max(compare_peak, current_percent)
                 overall = ((class_idx * 100.0) + 0.5 * compare_peak + 0.0) / float(num_classes)
@@ -152,7 +155,7 @@ def get_fused_pairs_for_mse(
 
     return fused_pairs, compare_peak
 
-# -------------------- Main --------------------
+                                                
 def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE_DIFFERENCE_PERCENTAGE):
     dataset_name = os.path.basename(ROOT_DATASET_DIR.rstrip("/\\")) or "Dataset_B"
     RESULTS_OUTPUT_DIR = "augmentation_results"
@@ -187,12 +190,12 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
     os.makedirs(MAIN_OUTPUT_DIR)
     print(f"Created main output directory: '{MAIN_OUTPUT_DIR}'")
 
-    class_results = {}          # existing summary (kept)
-    per_class_stats = []        # NEW: detailed per-class stats
-    stage1_compare_times = {}   # NEW: time spent comparing per class
-    stage2_fuse_times = {}      # NEW: time spent fusing per class
+    class_results = {}
+    per_class_stats = []
+    stage1_compare_times = {}
+    stage2_fuse_times = {}
 
-    # ---------- First class ----------
+                                       
     first_class_dir = class_dirs[0]
     class_name = os.path.basename(first_class_dir)
     class_idx = 0
@@ -201,7 +204,7 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
     initial_thresholds = {'lower': INITIAL_TH1, 'upper': INITIAL_TH2}
     compare_peak = 0.0
 
-    # timing (compare)
+                      
     comp_start = time.time()
     fused_pairs_first_class, compare_peak = get_fused_pairs_for_mse(
         first_class_dir, initial_thresholds, memory_tracker,
@@ -219,7 +222,7 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
         event={"type": "fuse_progress", "cls": class_name, "phase": "fuse",
                "class_idx": class_idx, "num_classes": num_classes}
     )
-    # Overall at start of fuse: compare contributes full 50%
+                                                            
     overall = ((class_idx * 100.0) + 50.0 + 0.0) / float(num_classes)
     emit_event(type="overall_progress", percent=clamp(overall), cls=class_name,
                class_idx=class_idx, num_classes=num_classes)
@@ -227,7 +230,7 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
     generated_so_far = 0
     denom = max(1, total_to_fuse)
 
-    # timing (fuse)
+                   
     fuse_start = time.time()
     for i, (p1, p2) in enumerate(fused_pairs_first_class):
         outp = os.path.join(class_output_dir, f"fused_{class_name}_{i}.png")
@@ -250,7 +253,7 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
     num_fused_first = len(fused_pairs_first_class)
     target_image_count = num_original_first + num_fused_first
 
-    # extra stats for first class (selected MSEs)
+                                                 
     mse_vals_first = []
     for (pp1, pp2) in fused_pairs_first_class:
         mse_vals_first.append(calculate_mse(pp1, pp2))
@@ -280,7 +283,7 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
                original=num_original_first, generated=num_fused_first,
                total_after=target_image_count)
 
-    # ---------- Subsequent classes ----------
+                                              
     for class_idx in range(1, num_classes):
         current_class_dir = class_dirs[class_idx]
         class_name = os.path.basename(current_class_dir)
@@ -296,9 +299,9 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
         final_pairs_for_this_class = []
         compare_peak = 0.0
 
-        # timing (compare & threshold search loop)
+                                                  
         comp_start = time.time()
-        final_upper_used = th2  # will be updated to the last th2 used on success/break
+        final_upper_used = th2                                                         
         while True:
             print(f"  Adjusting Th2 (current value: {th2:.2f})...")
             current_thresholds = {'lower': INITIAL_TH1, 'upper': th2}
@@ -344,7 +347,7 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
         generated_so_far = 0
         denom = max(1, total_to_fuse)
 
-        # timing (fuse)
+                       
         fuse_start = time.time()
         for j, (p1, p2) in enumerate(final_pairs_for_this_class):
             outp = os.path.join(class_output_dir, f"fused_{class_name}_{j}.png")
@@ -363,7 +366,7 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
         fuse_end = time.time()
         stage2_fuse_times[class_name] = fuse_end - fuse_start
 
-        # extra stats for this class (selected MSEs)
+                                                    
         mse_vals = []
         for (pp1, pp2) in final_pairs_for_this_class:
             mse_vals.append(calculate_mse(pp1, pp2))
@@ -397,12 +400,12 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
 
     overall_end_time = time.time()
 
-    # ---------- Final summary files ----------
+                                               
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     summary_dir = "augmentation_results"
     os.makedirs(summary_dir, exist_ok=True)
 
-    # Text summary (kept + expanded)
+                                    
     summary_filename = f"{dataset_name}_augmentation_summary.txt"
     summary_filepath = os.path.join(summary_dir, summary_filename)
 
@@ -426,7 +429,7 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
     lines.append(f"Total processing time: {overall_end_time - overall_start_time:.2f} seconds")
     lines.append(f"Peak memory usage: {memory_tracker.get_peak_memory():.2f} MB")
 
-    # NEW: extra detailed block (per-class thresholds, timings, mse stats)
+                                                                          
     lines.append("\n" + "=" * 50)
     lines.append("--- Detailed Per-Class Stats ---")
     for cs in per_class_stats:
@@ -443,7 +446,7 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
     with open(summary_filepath, 'w') as f:
         f.write('\n'.join(lines))
 
-    # NEW: JSON report (machine-readable)
+                                         
     json_filename = f"{dataset_name}_augmentation_summary_{ts}.json"
     json_path = os.path.join(summary_dir, json_filename)
     overall_json = {
@@ -466,7 +469,7 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
     print(f"--- Summary saved to: '{summary_filepath}' ---")
     print(f"--- JSON summary saved to: '{json_path}' ---")
 
-    # Pin overall to 100% at the end
+                                    
     emit_event(type="overall_progress", percent=100.0)
     emit_event(
         type="done",
@@ -475,7 +478,7 @@ def main(ROOT_DATASET_DIR, MAIN_OUTPUT_DIR, INITIAL_TH1, INITIAL_TH2, ACCEPTABLE
         summary_path=summary_filepath
     )
 
-# -------------------- CLI --------------------
+                                               
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--root-dataset-dir", required=False, default="../../data/organised_data/Dataset_B/Training")

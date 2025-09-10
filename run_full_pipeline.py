@@ -1,9 +1,29 @@
+"""Full planning pipeline for image pairing and augmentation.
+
+Overview:
+- End-to-end script for planning image pairs using feature extraction and similarity search.
+- Incorporates configurable targets (e.g., augmentation percentage), quality thresholds, class targeting, and upper bounds to control selection.
+- Builds or queries a similarity index (FAISS if available) and plans pairs that satisfy multiple constraints.
+- Supports optional fused preview outputs and writes detailed results to designated output directories.
+- This was the first iteration of the pipeline, before separating out the two stages, and the modes of operation..
+- This script is still used by the existing pipeline, but is now deprecated.
+Key components:
+- fuse_images: Helper to produce combined visualizations of selected pairs.
+- emit_event: Event reporting mechanism for progress and metrics.
+- plan_pairs: Core planner balancing class targets, minimum quality thresholds, and upper caps.
+- main: CLI driver that loads data, extracts features, plans pairs, and exports artifacts.
+
+Intended use:
+- Run as a script to create a balanced, constraint-aware pairing plan suitable for dataset augmentation.
+"""
+
+
 import os, shutil, pickle, time, json, argparse
 from datetime import datetime
 import numpy as np
 import psutil
 
-# ---- FAISS import is like this because I kept getting an error even though module is installed ----
+                                                                                                     
 try:
     import faiss
 except ImportError:
@@ -13,10 +33,7 @@ except ImportError:
         import faiss_gpu as faiss
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-#
-# -------------------- Defaults --------------------
-#  ROOT_DATASET_DIR = os.path.abspath("../../data/organised_data/Dataset_B/Training")
-#  AUGMENTED_OUTPUT_DIR = os.path.abspath("../../data/augmented_data/Dino/Dataset_B/Training")
+
 INDEX_OUTPUT_DIR = os.path.abspath("Faiss_Indexes")
 RESULTS_OUTPUT_DIR = os.path.abspath("augmentation_results")
 
@@ -24,7 +41,6 @@ AUGMENTATION_TARGET_PERCENTAGE = 600
 UPPER_THRESHOLD = 0.99
 MINIMUM_QUALITY_THRESHOLD = 0.80
 
-# I used these limits to ensure fair comparisons with the original ocmris number of generated images
 CLASS_TARGETS = {
     "glioma_tumor": 20441, "glioma": 20441,
     "meningioma_tumor": 11814, "meningioma": 11814,
@@ -51,7 +67,7 @@ except Exception:
             fused[:, c] = i1[:, c] if (c % 2 == 0) else i2[:, c]
         cv2.imwrite(outp, fused)
 
-# -------------------- Streaming helpers --------------------
+                                                             
 def emit_event(**kwargs):
     try:
         for k, v in list(kwargs.items()):
@@ -73,7 +89,7 @@ class MemoryTracker:
     def get_peak(self):
         return self.peak_memory_mb
 
-# -------------------- Pair selection logic --------------------
+                                                                
 def plan_pairs(embeddings, upper, lower_min, target_count):
     n = embeddings.shape[0]
     if n < 2: return lower_min, []
@@ -104,7 +120,7 @@ def plan_pairs(embeddings, upper, lower_min, target_count):
 
     return best_lower, picked
 
-# -------------------- Main pipeline --------------------
+                                                         
 def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, UPPER_THRESHOLD, MINIMUM_QUALITY_THRESHOLD, AUGMENTATION_TARGET_PERCENTAGE):
     if FeatureExtractor is None:
         raise RuntimeError("feature_extractor.FeatureExtractor is required but could not be imported.")
@@ -122,9 +138,9 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, UPPER_THRESHOLD, MINIMUM_QUALIT
         emit_event(type="done", elapsed_seconds=0, peak_mb=mem.get_peak())
         return
 
-    # ---------------- timings & stats containers ----------------
+                                                                  
     stage1_start = time.time()
-    per_class_stats = []  # list of dicts
+    per_class_stats = []                 
     config_snapshot = {
         "dataset_dir": os.path.abspath(ROOT_DATASET_DIR),
         "augmented_output_dir": os.path.abspath(AUGMENTED_OUTPUT_DIR),
@@ -251,28 +267,28 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, UPPER_THRESHOLD, MINIMUM_QUALIT
 
         print(f"  Planned {len(pairs)} pairs with lower={lower_th:.2f}, upper={UPPER_THRESHOLD:.2f}")
 
-        # Compute similarity stats for reporting (recompute norm & sim here)
+                                                                            
         try:
             norm = embeds / np.linalg.norm(embeds, axis=1, keepdims=True)
             sim_mat = norm @ norm.T
-            # counts available in chosen band and at min band
+                                                             
             n = norm.shape[0]
             iu = np.triu_indices(n, k=1)
             sims_all = sim_mat[iu]
-            # chosen band
+                         
             mask_chosen = (sims_all >= lower_th) & (sims_all < UPPER_THRESHOLD)
             class_stats["available_pairs_at_chosen_band"] = int(np.count_nonzero(mask_chosen))
-            # min band (lower_min..upper)
+                                         
             mask_min = (sims_all >= MINIMUM_QUALITY_THRESHOLD) & (sims_all < UPPER_THRESHOLD)
             class_stats["available_pairs_at_min_band"] = int(np.count_nonzero(mask_min))
-            # selected sims
+                           
             if pairs:
                 sel_sims = np.array([sim_mat[a, b] for (a, b) in pairs], dtype=np.float32)
                 class_stats["sim_selected_min"] = float(np.min(sel_sims))
                 class_stats["sim_selected_max"] = float(np.max(sel_sims))
                 class_stats["sim_selected_avg"] = float(np.mean(sel_sims))
         except Exception as _e:
-            # Leave stats as None if something goes wrong; we don't break the pipeline
+                                                                                      
             pass
 
         if not pairs:
@@ -299,7 +315,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, UPPER_THRESHOLD, MINIMUM_QUALIT
                 overall_now = 40.0 + (idx * slice_per_class) + (class_progress * slice_per_class)
                 emit_event(type="overall_progress", percent=overall_now, phase="augment", cls=class_name)
 
-        # finish per-class stats
+                                
         class_end = time.time()
         class_stats["generation_time_seconds"] = float(class_end - class_start)
         class_stats["shortfall"] = int(max(0, target_count - len(pairs)))
@@ -311,7 +327,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, UPPER_THRESHOLD, MINIMUM_QUALIT
     overall_end = time.time()
     duration = overall_end - overall_start
 
-    # ---------------- write detailed summaries ----------------
+                                                                
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_filename = f"augmentation_newPipeline_results_{ts}.txt"
     json_filename = f"augmentation_newPipeline_results_{ts}.json"
@@ -319,7 +335,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, UPPER_THRESHOLD, MINIMUM_QUALIT
     log_path = os.path.join(RESULTS_OUTPUT_DIR, log_filename)
     json_path = os.path.join(RESULTS_OUTPUT_DIR, json_filename)
 
-    # text report
+                 
     with open(log_path, "w") as f:
         f.write("=== Enhanced OCMRI Augmentation Summary ===\n")
         f.write(f"Run Timestamp: {ts}\n")
@@ -361,7 +377,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, UPPER_THRESHOLD, MINIMUM_QUALIT
             f.write(f"  Generation Time (s): {cs['generation_time_seconds']:.2f}\n")
             f.write(f"  Output Directory: {cs['output_dir']}\n")
 
-    # json report (machine-readable)
+                                    
     summary_json = {
         "run": config_snapshot,
         "timings": {
@@ -409,3 +425,20 @@ if __name__ == "__main__":
         MINIMUM_QUALITY_THRESHOLD=args.minimum_quality_threshold,
         AUGMENTATION_TARGET_PERCENTAGE=args.augmentation_target_percentage,
     )
+"""Full planning pipeline for image pairing and augmentation.
+
+Overview:
+- End-to-end orchestration for planning image pairs using feature extraction and similarity search.
+- Incorporates configurable targets (e.g., augmentation percentage), quality thresholds, class targeting, and upper bounds to control selection.
+- Builds or queries a similarity index (FAISS if available) and plans pairs that satisfy multiple constraints.
+- Supports optional fused preview outputs and writes detailed results to designated output directories.
+
+Key components:
+- fuse_images: Helper to produce combined visualizations of selected pairs.
+- emit_event: Event reporting mechanism for progress and metrics.
+- plan_pairs: Core planner balancing class targets, minimum quality thresholds, and upper caps.
+- main: CLI driver that loads data, extracts features, plans pairs, and exports artifacts.
+
+Intended use:
+- Run as a script to create a balanced, constraint-aware pairing plan suitable for dataset augmentation or curation workflows.
+"""

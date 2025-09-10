@@ -1,3 +1,22 @@
+"""Threshold-based image pairing pipeline.
+
+Overview:
+- Extracts image features using a pluggable FeatureExtractor.
+- Builds a similarity index (FAISS if available; otherwise a fallback) to search nearest neighbors.
+- Selects and emits image pairs whose similarity exceeds a user-provided threshold.
+- Optionally fuses paired images for visualization and writes outputs under configured result/index directories.
+- Tracks memory usage for basic diagnostics.
+
+Key components:
+- fuse_images: Utility to compose side-by-side previews of candidate pairs.
+- emit_event: Lightweight progress/reporting hook for external listeners or logs.
+- select_pairs_threshold: Core logic to filter candidate pairs by similarity threshold.
+- MemoryTracker: Monitors process memory to capture simple peak usage.
+- main: CLI entry point that orchestrates feature extraction, indexing/search, threshold filtering, and result export.
+
+Intended use:
+- Run as a script to produce threshold-filtered image pairings for downstream classification.
+"""
 import os, shutil, pickle, time, json, argparse
 from datetime import datetime
 import numpy as np, psutil
@@ -52,7 +71,7 @@ def select_pairs_threshold(embeddings, lower, upper):
     sim = norm @ norm.T
     iu = np.triu_indices(n, k=1)
     sims = sim[iu]
-    order = np.argsort(sims)[::-1]  # high to low (deterministic)
+    order = np.argsort(sims)[::-1]                               
     a, b = iu[0][order], iu[1][order]
     mask = (sims[order] >= lower) & (sims[order] < upper)
     return list(zip(a[mask], b[mask])), sims[order][mask]
@@ -72,14 +91,14 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, LOWER_THRESHOLD, UPPER_THRESHOL
     if not classes:
         emit_event(type="done", elapsed_seconds=0, peak_mb=mem.get_peak()); return
 
-    # fresh outputs
+                   
     for path in (INDEX_OUTPUT_DIR, AUGMENTED_OUTPUT_DIR):
         try:
             if os.path.exists(path) and os.access(path, os.W_OK): shutil.rmtree(path)
         except Exception as e: print(f"[Warning] Could not delete {path}: {e}")
     os.makedirs(AUGMENTED_OUTPUT_DIR, exist_ok=True)
 
-    # --- Stage 1: Indexing ---
+                               
     stage1_start = time.time()
     fe = FeatureExtractor()
     per_class_stats = []
@@ -108,7 +127,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, LOWER_THRESHOLD, UPPER_THRESHOL
                    percent=(idx+1)/max(1,len(class_dirs))*40.0, cls=class_name)
     stage1_dur = time.time() - stage1_start
 
-    # --- Stage 2: Augmentation (threshold mode) ---
+                                                    
     total_generated = 0
     stage2_start = time.time()
     slice_per_class = 60.0/float(len(class_dirs) or 1)
@@ -172,7 +191,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, LOWER_THRESHOLD, UPPER_THRESHOL
     stage2_dur = time.time() - stage2_start
     duration = time.time() - overall_start
 
-    # --- Reporting ---
+                       
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     os.makedirs(RESULTS_OUTPUT_DIR, exist_ok=True)
     txt = os.path.join(RESULTS_OUTPUT_DIR, f"augmentation_threshold_mode_{ts}.txt")

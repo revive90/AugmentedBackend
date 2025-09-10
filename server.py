@@ -24,7 +24,7 @@ app.add_middleware(
 SERVE_ROOT = Path(__file__).parent.resolve()
 app.mount("/static", StaticFiles(directory=str(SERVE_ROOT)), name="static")
 
-# ----------------- Request models -----------------
+                                                    
 class BaselineRequest(BaseModel):
     ROOT_DATASET_DIR: str
     MAIN_OUTPUT_DIR: str
@@ -32,24 +32,24 @@ class BaselineRequest(BaseModel):
     INITIAL_TH2: float
     ACCEPTABLE_DIFFERENCE_PERCENTAGE: float
 
-# Threshold mode (used by /augment/enhanced/stream in  threshold page)
+                                                                      
 class EnhancedThresholdRequest(BaseModel):
     ROOT_DATASET_DIR: str
     AUGMENTED_OUTPUT_DIR: str
     LOWER_THRESHOLD: float
     UPPER_THRESHOLD: float
 
-# Percentage mode (used by EnhancedPerc.tsx)
+                                            
 class EnhancedPercentageRequest(BaseModel):
     ROOT_DATASET_DIR: str
     AUGMENTED_OUTPUT_DIR: str
     AUGMENTATION_TARGET_PERCENTAGE: float
 
-# Class-specific mode (used by EnhancedClassSpecific.tsx)
+                                                         
 class EnhancedClassSpecificRequest(BaseModel):
     ROOT_DATASET_DIR: str
     AUGMENTED_OUTPUT_DIR: str
-    CLASS_TARGETS_JSON: str  # JSON string e.g. {"glioma":2000,...}
+    CLASS_TARGETS_JSON: str                                        
 
 def to_static_url(p: Path) -> Optional[str]:
     try:
@@ -147,7 +147,7 @@ def pick_sample_images_from_classes(out_dir: Path, limit: int = 5) -> List[str]:
             pass
     return urls
 
-# ---------- Safety check for folder deletion----------
+                                                       
 def _validate_path(path_str: str, label: str) -> Path:
     if not path_str.strip():
         raise HTTPException(400, f"{label} must not be empty.")
@@ -156,7 +156,7 @@ def _validate_path(path_str: str, label: str) -> Path:
         raise HTTPException(400, f"{label} path is invalid or too broad.")
     return path
 
-# ---------- Process streaming with EVT latching ----------
+                                                           
 SENTINEL = "[[__DONE__]]"
 
 def _stream_proc(cmd: List[str], cwd: Path, out_dir: Path, script_dir: Path) -> Iterator[str]:
@@ -176,9 +176,9 @@ def _stream_proc(cmd: List[str], cwd: Path, out_dir: Path, script_dir: Path) -> 
         if proc.stdout is not None:
             for raw in proc.stdout:
                 line = raw.replace("\r", "\n")
-                # Echo through
+                              
                 yield line
-                # Capture EVT
+                             
                 if line.startswith("[[EVT]]"):
                     try:
                         evt_json = line[len("[[EVT]]"):].strip()
@@ -200,7 +200,7 @@ def _stream_proc(cmd: List[str], cwd: Path, out_dir: Path, script_dir: Path) -> 
 
     samples = pick_sample_images_from_classes(out_dir, limit=5)
 
-    # Prefer the summary from THIS run
+                                      
     summary_url = None
     if last_summary_txt:
         p = Path(last_summary_txt)
@@ -216,7 +216,7 @@ def _stream_proc(cmd: List[str], cwd: Path, out_dir: Path, script_dir: Path) -> 
 
     yield f"\n{SENTINEL} " + json.dumps(payload) + "\n"
 
-# -----------------  endpoints -----------------
+                                                
 @app.get("/datasets/scan-classes")
 def scan_classes(root: str = Query(..., description="Path to dataset root")):
     root_dir = _validate_path(root, "ROOT_DATASET_DIR")
@@ -230,7 +230,7 @@ def scan_classes(root: str = Query(..., description="Path to dataset root")):
         classes.append({"name": d.name, "image_count": count})
     return {"root": str(root_dir), "classes": classes}
 
-# ----------------- Baseline endpoints -----------------
+                                                        
 def _build_cmd_baseline(script: Path, root_dir: Path, out_dir: Path, th1: float, th2: float, tol: float) -> List[str]:
     return [
         sys.executable, "-u", str(script),
@@ -277,7 +277,7 @@ def run_baseline_stream(req: BaselineRequest):
     resp.headers["X-Accel-Buffering"] = "no"
     return resp
 
-# ----------------- Threshold mode -----------------
+                                                    
 def _build_cmd_threshold(script: Path, root_dir: Path, out_dir: Path, lower: float, upper: float) -> List[str]:
     return [
         sys.executable, "-u", str(script),
@@ -287,7 +287,7 @@ def _build_cmd_threshold(script: Path, root_dir: Path, out_dir: Path, lower: flo
         "--upper-threshold", str(upper),
     ]
 
-@app.post("/augment/enhanced/stream")  #  threshold page hits this ep
+@app.post("/augment/enhanced/stream")                                
 def run_enhanced_threshold_stream(req: EnhancedThresholdRequest):
     script = (Path(__file__).parent / "run_threshold_pipeline.py").resolve()
     root_dir = _validate_path(req.ROOT_DATASET_DIR, "ROOT_DATASET_DIR")
@@ -305,7 +305,7 @@ def run_enhanced_threshold_stream(req: EnhancedThresholdRequest):
     resp.headers["X-Accel-Buffering"] = "no"
     return resp
 
-# ----------------- Percentage mode -----------------
+                                                     
 def _build_cmd_percentage(script: Path, root_dir: Path, out_dir: Path, pct: float) -> List[str]:
     return [
         sys.executable, "-u", str(script),
@@ -332,7 +332,7 @@ def run_enhanced_percentage_stream(req: EnhancedPercentageRequest):
     resp.headers["X-Accel-Buffering"] = "no"
     return resp
 
-# ----------------- Class-specific mode -----------------
+                                                         
 def _build_cmd_class(script: Path, root_dir: Path, out_dir: Path, targets_json: str) -> List[str]:
     return [
         sys.executable, "-u", str(script),
@@ -359,7 +359,7 @@ def run_enhanced_class_specific_stream(req: EnhancedClassSpecificRequest):
     resp.headers["X-Accel-Buffering"] = "no"
     return resp
 
-# Optional: planning endpoint used by the UI to show availability/shortfall
+                                                                           
 class PlanRequest(BaseModel):
     ROOT_DATASET_DIR: str
     CLASS_TARGETS_JSON: str
@@ -373,14 +373,14 @@ def plan_class_specific(req: PlanRequest):
             targets = {}
     except Exception:
         targets = {}
-    # naive availability = current images per class (you can replace w/ a smarter estimator)
+                                                                                            
     per_class = {}
     for d in sorted(p for p in root_dir.iterdir() if p.is_dir()):
         count = 0
         for ext in (".png", ".jpg", ".jpeg"):
             count += len(list(d.rglob(f"*{ext}")))
         tgt = int(targets.get(d.name, 0) or 0)
-        avail = max(0, count * (count - 1) // 2)  # max unique pairs, rough upper bound
+        avail = max(0, count * (count - 1) // 2)                                       
         shortfall = max(0, tgt - avail)
         per_class[d.name] = {"available": avail, "shortfall": shortfall}
     return {"per_class": per_class}

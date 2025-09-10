@@ -1,3 +1,20 @@
+"""
+Summary:
+This script runs a class-specific image similarity pipeline. It extracts features for images, builds a per-class nearest-neighbor index, and selects the most similar image pairs within each class. It can also generate quick visual previews of pairs and stream progress/metrics as structured events.
+
+Inputs and configuration (via CLI arguments):
+- Paths to the labeled dataset or class-to-image listings.
+- Output locations for indexes and results .
+- Pair selection/search parameters
+- Runtime options such as worker counts, seeds, and toggles for preview generation.
+
+Outputs:
+- Per-class similarity results.
+- Saved ANN indexes for reproducibility and faster re-runs.
+- Optional fused image previews for qualitative assessment.
+- Event logs and basic metrics.
+"""
+
 import os
 import shutil
 import pickle
@@ -9,7 +26,7 @@ from datetime import datetime
 import numpy as np
 import psutil
 
-# faiss keeps throwing an error
+                               
 try:
     import faiss
 except ImportError:
@@ -18,15 +35,15 @@ except ImportError:
     except ImportError:
         import faiss_gpu as faiss
 
-#  OpenMP duplicate warning crashes in some environments
+                                                        
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-# Default folders (written relative to where the script runs)
+                                                             
 INDEX_OUTPUT_DIR = os.path.abspath("Faiss_Indexes")
 RESULTS_OUTPUT_DIR = os.path.abspath("augmentation_results")
 
 try:
-    from feature_extractor import FeatureExtractor  # must expose .extract(img_path)->np.ndarray
+    from feature_extractor import FeatureExtractor                                              
 except Exception:
     FeatureExtractor = None
 
@@ -49,13 +66,13 @@ except Exception:
         fused[:, 1::2] = i2[:, 1::2]
         cv2.imwrite(outp, fused)
 
-# -------------- event helpers --------------
+                                             
 def emit_event(**kwargs):
     """
     Print a single-line JSON envelope prefixed with [[EVT]] for the frontend to parse.
     """
     try:
-        # make floats smaller to keep lines tidy
+                                                
         for k, v in list(kwargs.items()):
             if isinstance(v, float):
                 kwargs[k] = round(v, 4)
@@ -79,7 +96,7 @@ class MemoryTracker:
         return self.peak
 
 
-# -------------- core helpers --------------
+                                            
 def _extract_class_images(root_dir):
     """
     Return (classes, paths_map) where:
@@ -108,20 +125,20 @@ def _top_pairs_by_similarity(embeddings, target_count):
     if n < 2 or target_count <= 0:
         return []
 
-    # L2-normalize rows
+                       
     norm = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
-    # cosine similarity = dot product of normalized vectors
+                                                           
     sim = norm @ norm.T
 
     iu = np.triu_indices(n, k=1)
     sims = sim[iu]
-    order = np.argsort(sims)[-1::-1]  # high->low
+    order = np.argsort(sims)[-1::-1]             
     a, b = iu[0][order], iu[1][order]
     pairs = list(zip(a, b))
     return pairs[: int(target_count)]
 
 
-# -------------- main pipeline --------------
+                                             
 def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
     if FeatureExtractor is None:
         raise RuntimeError(
@@ -146,7 +163,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
 
     os.makedirs(RESULTS_OUTPUT_DIR, exist_ok=True)
 
-    # Collect classes + available images
+                                        
     classes, paths_map = _extract_class_images(ROOT_DATASET_DIR)
     if not classes:
         emit_event(
@@ -159,7 +176,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
         )
         return
 
-    # Fresh outputs (indexes and augmented)
+                                           
     for path in (INDEX_OUTPUT_DIR, AUGMENTED_OUTPUT_DIR):
         try:
             if os.path.exists(path) and os.access(path, os.W_OK):
@@ -168,7 +185,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
             print(f"[Warning] Could not delete {path}: {e}")
     os.makedirs(AUGMENTED_OUTPUT_DIR, exist_ok=True)
 
-    # -------- Stage 1: Indexing (0% - 40%) --------
+                                                    
     stage1_start = time.time()
     fe = FeatureExtractor()
     index_info = {}
@@ -184,7 +201,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
                 feats.append(vec)
                 valid_paths.append(p)
 
-            # heart beat every 50 or at end of class
+                                                    
             if (i + 1) % 50 == 0 or (i + 1) == len(image_paths):
                 mem.track()
                 emit_event(
@@ -215,7 +232,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
         else:
             index_info[cls] = {"index_file": None, "map_file": None, "count": 0}
 
-        # progress to 40%
+                         
         done_fraction = (idx + 1) / max(1, total_classes)
         emit_event(
             type="overall_progress",
@@ -226,7 +243,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
 
     stage1_dur = time.time() - stage1_start
 
-    # -------- Stage 2: Augmentation by explicit class targets (40% - 100%) --------
+                                                                                    
     stage2_start = time.time()
     total_generated = 0
     per_class_stats = []
@@ -237,7 +254,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
         slice_per_class = 60.0
 
     for idx, cls in enumerate(classes):
-        # Target count of *new* images for this class
+                                                     
         target = int(targets.get(cls, 0) or 0)
         stats = {
             "class": cls,
@@ -248,14 +265,14 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
             "output_dir": None,
         }
 
-        # If no work to do or no enough images to form pairs
+                                                            
         if (
             target <= 0
             or index_info[cls]["index_file"] is None
             or index_info[cls]["count"] < 2
         ):
             per_class_stats.append(stats)
-            # still advance overall progress for this class
+                                                           
             emit_event(
                 type="overall_progress",
                 phase="augment",
@@ -264,7 +281,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
             )
             continue
 
-        # Reconstruct features from Flat index (stores vectors)
+                                                               
         index = faiss.read_index(index_info[cls]["index_file"])
         with open(index_info[cls]["map_file"], "rb") as f:
             image_paths = pickle.load(f)
@@ -272,15 +289,15 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
         embeds = index.reconstruct_n(0, index.ntotal)
         mem.track()
 
-        # Cap target to maximum unique pairs n*(n-1)/2
+                                                      
         n = len(image_paths)
         max_pairs = n * (n - 1) // 2
         target_capped = min(target, max_pairs)
 
-        # Choose top pairs (highest similarity first) deterministically
+                                                                       
         pairs = _top_pairs_by_similarity(embeds, target_capped)
 
-        # Output dir for new images of this class
+                                                 
         class_out = os.path.join(AUGMENTED_OUTPUT_DIR, cls)
         os.makedirs(class_out, exist_ok=True)
         stats["output_dir"] = os.path.abspath(class_out)
@@ -294,7 +311,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
             stats["generated"] += 1
             total_generated += 1
 
-            # Heart beat occasionally
+                                     
             if (j + 1) % 25 == 0 or (j + 1) == len(pairs):
                 mem.track()
                 emit_event(
@@ -320,7 +337,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
     stage2_dur = time.time() - stage2_start
     duration = time.time() - overall_start
 
-    # -------- Reporting --------
+                                 
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     os.makedirs(RESULTS_OUTPUT_DIR, exist_ok=True)
     txt = os.path.join(
@@ -330,7 +347,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
         RESULTS_OUTPUT_DIR, f"augmentation_class_specific_mode_{ts}.json"
     )
 
-    # augmentation text summary
+                               
     with open(txt, "w", encoding="utf-8") as f:
         f.write("=== Enhanced OCMRI: Class-Specific Mode Summary ===\n")
         f.write(f"Run Timestamp: {ts}\n\n")
@@ -350,7 +367,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
             f.write(f"  Generation Time (s): {cs['generation_time_seconds']:.2f}\n")
             f.write(f"  Output Directory: {cs['output_dir']}\n")
 
-    # JSON
+          
     try:
         with open(js, "w", encoding="utf-8") as jf:
             json.dump(
@@ -374,11 +391,11 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
     except Exception:
         pass
 
-    # Final console + events
+                            
     print("\n--- Class-Specific Mode Complete ---")
     print(f"Results: {txt}\nJSON: {js}\nTotal: {duration:.2f}s")
 
-    # Let the server latch onto the exact summary + count
+                                                         
     emit_event(type="overall_progress", percent=100.0)
     emit_event(
         type="done",
@@ -390,7 +407,7 @@ def main(ROOT_DATASET_DIR, AUGMENTED_OUTPUT_DIR, CLASS_TARGETS_JSON):
     )
 
 
-# -------------- CLI --------------
+                                   
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--root-dataset-dir", type=str, required=True)
