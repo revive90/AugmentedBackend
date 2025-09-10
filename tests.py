@@ -74,7 +74,7 @@ class _FakeFaissIndex:
 
 def _fake_faiss_module(tmpdir: Path):
     """
-    Build a tiny fake 'faiss' module with IndexFlatL2, write_index, read_index.
+    Build a tiny fake faiss module with IndexFlatL2, write_index, read_index.
     Pipelines only rely on a small subset of API.
     """
     m = types.ModuleType("faiss")
